@@ -179,10 +179,23 @@ export class SchemaRegistry {
 			throw new SchemaError(`Collection "${slug}" not found`, "COLLECTION_NOT_FOUND");
 		}
 
-		// Check label uniqueness (excluding the collection being updated)
-		const newLabel = input.label ?? existing.label;
-		const newLabelSingular = input.labelSingular ?? existing.labelSingular;
-		await this.checkLabelUniqueness(newLabel, newLabelSingular, slug);
+		// Only check label uniqueness for fields that are actually changing.
+		// This avoids blocking updates to collections that are already in a
+		// non-unique state (e.g., two collections with the same label created
+		// before uniqueness was enforced).
+		// TODO(1.0): Remove this conditional -- check all labels unconditionally.
+		// By 1.0 all sites should have unique labels (enforced on create since
+		// this release). The selective check only exists for the migration window.
+		const labelChanged = input.label !== undefined && input.label !== existing.label;
+		const labelSingularChanged =
+			input.labelSingular !== undefined && input.labelSingular !== existing.labelSingular;
+		if (labelChanged || labelSingularChanged) {
+			await this.checkLabelUniqueness(
+				labelChanged ? input.label : undefined,
+				labelSingularChanged ? input.labelSingular : undefined,
+				slug,
+			);
+		}
 
 		const now = new Date().toISOString();
 
@@ -249,10 +262,12 @@ export class SchemaRegistry {
 	 * Pass `excludeSlug` to skip the collection being updated.
 	 */
 	private async checkLabelUniqueness(
-		label: string,
+		label?: string,
 		labelSingular?: string,
 		excludeSlug?: string,
 	): Promise<void> {
+		if (!label && !labelSingular) return;
+
 		let query = this.db
 			.selectFrom("_emdash_collections")
 			.select(["slug", "label", "label_singular"]);
@@ -264,7 +279,7 @@ export class SchemaRegistry {
 		const others = await query.execute();
 
 		for (const other of others) {
-			if (other.label === label) {
+			if (label && other.label === label) {
 				throw new SchemaError(
 					`A content type with the label "${label}" already exists`,
 					"LABEL_EXISTS",

@@ -416,5 +416,30 @@ describe("SchemaRegistry", () => {
 
 			expect(updated.description).toBe("Blog posts");
 		});
+
+		// TODO(1.0): Remove this test. Once all sites have unique labels, the
+		// selective check it covers should be replaced with unconditional validation.
+		it("should allow updating non-label fields when labels are already duplicated", async () => {
+			// Simulate a pre-existing non-unique state by inserting directly
+			await registry.createCollection({ slug: "posts", label: "Articles" });
+			await db
+				.updateTable("_emdash_collections")
+				.set({ label: "Articles" })
+				.where("slug", "=", "posts")
+				.execute();
+			await registry.createCollection({ slug: "news", label: "News" });
+			await db
+				.updateTable("_emdash_collections")
+				.set({ label: "Articles" })
+				.where("slug", "=", "news")
+				.execute();
+
+			// Updating description (not labels) should succeed despite the duplicate
+			const updated = await registry.updateCollection("posts", {
+				description: "Some articles",
+			});
+
+			expect(updated.description).toBe("Some articles");
+		});
 	});
 });
