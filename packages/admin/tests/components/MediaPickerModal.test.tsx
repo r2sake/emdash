@@ -225,6 +225,19 @@ describe("MediaPickerModal", () => {
 				{ timeout: 3000 },
 			);
 		});
+
+		it("hideUrlInput hides the URL input section (for non-image pickers)", async () => {
+			const screen = await renderModal({ hideUrlInput: true });
+
+			// "Insert from URL" label should not appear when hidden
+			await expect.element(screen.getByText("Select Image")).toBeInTheDocument();
+			expect(document.body.textContent).not.toContain("Insert from URL");
+			expect(document.body.textContent).not.toContain("or choose from library");
+
+			// The URL input itself should not be in the DOM
+			const urlInput = document.querySelector('input[aria-label="Image URL"]');
+			expect(urlInput).toBeNull();
+		});
 	});
 
 	describe("cancel and close", () => {

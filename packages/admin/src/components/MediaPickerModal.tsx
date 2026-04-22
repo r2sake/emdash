@@ -42,6 +42,12 @@ export interface MediaPickerModalProps {
 	/** Filter by mime type prefix, e.g. "image/" */
 	mimeTypeFilter?: string;
 	title?: string;
+	/**
+	 * Hide the "Insert from URL" input. Defaults to false.
+	 * The URL input probes image dimensions and is only meaningful for image pickers,
+	 * so non-image pickers (e.g. generic file pickers) should hide it.
+	 */
+	hideUrlInput?: boolean;
 }
 
 /**
@@ -66,6 +72,7 @@ export function MediaPickerModal({
 	onSelect,
 	mimeTypeFilter = "image/",
 	title: providedTitle,
+	hideUrlInput = false,
 }: MediaPickerModalProps) {
 	const { t } = useLingui();
 	const title = providedTitle ?? t`Select Image`;
@@ -362,41 +369,45 @@ export function MediaPickerModal({
 					/>
 				</div>
 
-				{/* URL Input */}
-				<div className="border-b pb-4">
-					<Label>{t`Insert from URL`}</Label>
-					<div className="flex gap-2 mt-1.5">
-						<div className="flex-1 relative">
-							<Globe className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-kumo-subtle" />
-							<Input
-								type="url"
-								placeholder="https://example.com/image.jpg"
-								aria-label={t`Image URL`}
-								value={imageUrl}
-								onChange={(e) => {
-									setImageUrl(e.target.value);
-									setUrlError(null);
-								}}
-								onKeyDown={handleUrlKeyDown}
-								className="ps-9"
-							/>
+				{/* URL Input (image pickers only — probes image dimensions) */}
+				{!hideUrlInput && (
+					<>
+						<div className="border-b pb-4">
+							<Label>{t`Insert from URL`}</Label>
+							<div className="flex gap-2 mt-1.5">
+								<div className="flex-1 relative">
+									<Globe className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-kumo-subtle" />
+									<Input
+										type="url"
+										placeholder="https://example.com/image.jpg"
+										aria-label={t`Image URL`}
+										value={imageUrl}
+										onChange={(e) => {
+											setImageUrl(e.target.value);
+											setUrlError(null);
+										}}
+										onKeyDown={handleUrlKeyDown}
+										className="ps-9"
+									/>
+								</div>
+								<Button onClick={handleUrlSubmit} disabled={!imageUrl.trim() || isProbing}>
+									{isProbing ? <Loader size="sm" /> : t`Insert`}
+								</Button>
+							</div>
+							{urlError && <p className="text-sm text-kumo-danger mt-1">{urlError}</p>}
 						</div>
-						<Button onClick={handleUrlSubmit} disabled={!imageUrl.trim() || isProbing}>
-							{isProbing ? <Loader size="sm" /> : t`Insert`}
-						</Button>
-					</div>
-					{urlError && <p className="text-sm text-kumo-danger mt-1">{urlError}</p>}
-				</div>
 
-				{/* Divider with "or" */}
-				<div className="relative py-2">
-					<div className="absolute inset-0 flex items-center">
-						<span className="w-full border-t" />
-					</div>
-					<div className="relative flex justify-center text-xs uppercase">
-						<span className="bg-kumo-base px-2 text-kumo-subtle">{t`or choose from library`}</span>
-					</div>
-				</div>
+						{/* Divider with "or" */}
+						<div className="relative py-2">
+							<div className="absolute inset-0 flex items-center">
+								<span className="w-full border-t" />
+							</div>
+							<div className="relative flex justify-center text-xs uppercase">
+								<span className="bg-kumo-base px-2 text-kumo-subtle">{t`or choose from library`}</span>
+							</div>
+						</div>
+					</>
+				)}
 
 				{/* Provider Tabs */}
 				{providerTabs.length > 1 && (

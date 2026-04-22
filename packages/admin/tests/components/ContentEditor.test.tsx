@@ -262,6 +262,56 @@ describe("ContentEditor", () => {
 			await expect.element(all[2]!).toBeChecked();
 		});
 
+		it("renders file fields with a Select file button (not a plain text input)", async () => {
+			// Regression test for #718: the "file" field kind used to fall through to the
+			// default case and render a text input, making it impossible to actually attach
+			// a file. It must render a media picker trigger instead.
+			const screen = await renderEditor({
+				fields: { attachment: { kind: "file", label: "Attachment" } },
+				isNew: true,
+			});
+
+			// The button that opens the picker should be present.
+			const selectBtn = screen.getByRole("button", { name: /Select file/i });
+			await expect.element(selectBtn).toBeInTheDocument();
+
+			// And there must not be a text input masquerading as the file field.
+			// The old bug rendered `<Input>` with label "Attachment"; the field label now
+			// belongs to the picker region, not a text input.
+			const attachmentInputs = screen.getByLabelText("Attachment").all();
+			for (const el of attachmentInputs) {
+				expect(el.element().tagName).not.toBe("INPUT");
+			}
+		});
+
+		it("renders existing file field values as a filename, not a text input", async () => {
+			const item = makeItem({
+				data: {
+					title: "Test",
+					body: "",
+					attachment: {
+						id: "file-1",
+						filename: "report.pdf",
+						mimeType: "application/pdf",
+						size: 102400,
+					},
+				},
+			});
+			const screen = await renderEditor({
+				isNew: false,
+				item,
+				fields: {
+					title: { kind: "string", label: "Title", required: true },
+					attachment: { kind: "file", label: "Attachment" },
+				},
+			});
+
+			// Filename should be visible
+			await expect.element(screen.getByText("report.pdf")).toBeInTheDocument();
+			// Change button present (picker is wired up)
+			await expect.element(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
+		});
+
 		it("renders json fields as a textarea", async () => {
 			const screen = await renderEditor({
 				fields: { metadata: { kind: "json", label: "Metadata" } },
