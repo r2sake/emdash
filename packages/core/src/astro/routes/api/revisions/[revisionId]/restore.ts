@@ -52,6 +52,18 @@ export const POST: APIRoute = async ({ params, locals }) => {
 	const denied = requireOwnerPerm(user, authorId, "content:edit_own", "content:edit_any");
 	if (denied) return denied;
 
+	// Restoring a revision is effectively a publish-adjacent action — on collections
+	// without revision support it rewrites live content immediately, and on revisioned
+	// collections it stages a new draft ready for publish. Require publish permission
+	// alongside edit so restore can't be used to sidestep publish-specific policy.
+	const publishDenied = requireOwnerPerm(
+		user,
+		authorId,
+		"content:publish_own",
+		"content:publish_any",
+	);
+	if (publishDenied) return publishDenied;
+
 	const result = await emdash.handleRevisionRestore(revisionId, user!.id);
 
 	return unwrapResult(result);

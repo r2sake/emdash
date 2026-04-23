@@ -1574,12 +1574,14 @@ export function createMcpServer(): McpServer {
 			if (!existing.success) {
 				return unwrap(existing);
 			}
-			requireOwnership(
-				extra,
-				extractContentAuthorId(existing.data),
-				"content:edit_own",
-				"content:edit_any",
-			);
+			const authorId = extractContentAuthorId(existing.data);
+			requireOwnership(extra, authorId, "content:edit_own", "content:edit_any");
+
+			// Restore is publish-adjacent — on non-revisioned collections it rewrites
+			// live content immediately; on revisioned collections it stages a draft.
+			// Require publish permission alongside edit so restore can't be used to
+			// sidestep publish-specific policy.
+			requireOwnership(extra, authorId, "content:publish_own", "content:publish_any");
 
 			return unwrap(await emdash.handleRevisionRestore(args.revisionId, userId));
 		},

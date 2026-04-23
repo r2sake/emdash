@@ -3,10 +3,12 @@
  */
 
 import type { Kysely } from "kysely";
+import { sql } from "kysely";
 
 import { ContentRepository } from "../../database/repositories/content.js";
 import { RevisionRepository, type Revision } from "../../database/repositories/revision.js";
 import type { Database } from "../../database/types.js";
+import { validateIdentifier } from "../../database/validate.js";
 import type { ApiResult, ContentResponse } from "../types.js";
 
 export interface RevisionListResponse {
@@ -86,12 +88,26 @@ export async function handleRevisionGet(
 }
 
 /**
- * Restore a revision (updates content to this revision's data and creates new revision)
+ * Restore a revision.
+ *
+ * Behavior depends on whether the collection has revision support:
+ *
+ * - `supportsRevisions: false` (default) — Writes the revision's data
+ *   directly into the live content table, matching the "edit immediately
+ *   goes live" semantics of collections without draft revisions.
+ *
+ * - `supportsRevisions: true` — Stages the restored data as a draft
+ *   revision and points the entry's `draft_revision_id` at it. Live
+ *   content columns are left untouched so the restore still has to go
+ *   through the normal publish workflow before it's visible. This
+ *   mirrors how `handleContentUpdate` treats revisioned collections
+ *   and prevents restore from bypassing editorial review.
  */
 export async function handleRevisionRestore(
 	db: Kysely<Database>,
 	revisionId: string,
 	callerUserId: string,
+	options: { supportsRevisions?: boolean } = {},
 ): Promise<ApiResult<ContentResponse>> {
 	try {
 		const revisionRepo = new RevisionRepository(db);
@@ -109,10 +125,54 @@ export async function handleRevisionRestore(
 			};
 		}
 
-		// Extract _slug from revision data (stored as metadata, not a real column)
+		if (options.supportsRevisions) {
+			// Draft-aware path: stage the restored data as a new draft revision.
+			// Do NOT update live content columns — the restore must go through
+			// publish, just like any other edit on a revisioned collection.
+			const draftRevision = await revisionRepo.create({
+				collection: revision.collection,
+				entryId: revision.entryId,
+				data: revision.data,
+				authorId: callerUserId,
+			});
+
+			validateIdentifier(revision.collection, "collection");
+			const tableName = `ec_${revision.collection}`;
+			await sql`
+				UPDATE ${sql.ref(tableName)}
+				SET draft_revision_id = ${draftRevision.id},
+					updated_at = ${new Date().toISOString()}
+				WHERE id = ${revision.entryId}
+				AND deleted_at IS NULL
+			`.execute(db);
+
+			// Fire-and-forget: prune old revisions to prevent unbounded growth
+			void revisionRepo
+				.pruneOldRevisions(revision.collection, revision.entryId, 50)
+				.catch(() => {});
+
+			const item = await contentRepo.findById(revision.collection, revision.entryId);
+			if (!item) {
+				return {
+					success: false,
+					error: {
+						code: "NOT_FOUND",
+						message: `Content item not found: ${revision.entryId}`,
+					},
+				};
+			}
+
+			return {
+				success: true,
+				data: { item },
+			};
+		}
+
+		// Legacy path: collection does not support revisions. A restore is
+		// equivalent to an edit that goes live immediately. Preserved for
+		// backwards compatibility with non-revisioned collections.
 		const { _slug, ...fieldData } = revision.data;
 
-		// Update the content with the revision's data
 		const item = await contentRepo.update(revision.collection, revision.entryId, {
 			data: fieldData,
 			slug: typeof _slug === "string" ? _slug : undefined,

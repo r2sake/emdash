@@ -2010,7 +2010,27 @@ export class EmDashRuntime {
 	}
 
 	async handleRevisionRestore(revisionId: string, callerUserId: string) {
-		return handleRevisionRestore(this.db, revisionId, callerUserId);
+		// Detect whether the target collection uses draft revisions so the
+		// handler can take the draft-aware path. Without this, restore would
+		// overwrite live content even on collections with `supports: ["revisions"]`,
+		// bypassing the editorial review workflow that `handleContentUpdate`
+		// enforces for ordinary edits.
+		let supportsRevisions = false;
+		try {
+			const revision = await handleRevisionGet(this.db, revisionId);
+			if (revision.success && revision.data?.item?.collection) {
+				const collectionInfo = await this.schemaRegistry.getCollectionWithFields(
+					revision.data.item.collection,
+				);
+				supportsRevisions = collectionInfo?.supports?.includes("revisions") ?? false;
+			}
+		} catch {
+			// If we can't determine capability, fall through to legacy
+			// behavior. The handler will then look up the revision itself
+			// and return NOT_FOUND if it's really missing.
+		}
+
+		return handleRevisionRestore(this.db, revisionId, callerUserId, { supportsRevisions });
 	}
 
 	// =========================================================================

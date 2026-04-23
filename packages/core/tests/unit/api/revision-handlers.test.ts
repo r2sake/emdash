@@ -226,5 +226,113 @@ describe("Revision Handlers", () => {
 			expect(result.success).toBe(false);
 			expect(result.error?.code).toBe("NOT_FOUND");
 		});
+
+		// -----------------------------------------------------------------
+		// Draft-aware restore for collections with revision support
+		//
+		// When the collection has `supports: ["revisions"]`, restore must
+		// NOT overwrite live content. Instead it stages the restored data
+		// as a draft revision, preserving the existing editorial workflow
+		// (restore -> review -> publish).
+		// -----------------------------------------------------------------
+
+		describe("with supportsRevisions = true", () => {
+			it("does not overwrite live content columns on restore", async () => {
+				const content = await contentRepo.create({
+					...createPostFixture(),
+					data: { title: "Live title", content: "Live content" },
+				});
+
+				// Create a revision snapshotting a different past state
+				const pastRevision = await revisionRepo.create({
+					collection: "post",
+					entryId: content.id,
+					data: { title: "Past title", content: "Past content" },
+				});
+
+				const result = await handleRevisionRestore(db, pastRevision.id, callerUserId, {
+					supportsRevisions: true,
+				});
+
+				expect(result.success).toBe(true);
+
+				// Live content columns must be unchanged
+				const live = await contentRepo.findById("post", content.id);
+				expect(live?.data.title).toBe("Live title");
+				expect(live?.data.content).toBe("Live content");
+			});
+
+			it("creates a new draft revision with the restored data", async () => {
+				const content = await contentRepo.create({
+					...createPostFixture(),
+					data: { title: "Live" },
+				});
+				const pastRevision = await revisionRepo.create({
+					collection: "post",
+					entryId: content.id,
+					data: { title: "Past state", extra: "field" },
+				});
+
+				await handleRevisionRestore(db, pastRevision.id, callerUserId, {
+					supportsRevisions: true,
+				});
+
+				const entry = await contentRepo.findById("post", content.id);
+				expect(entry?.draftRevisionId).toBeTruthy();
+				expect(entry?.draftRevisionId).not.toBe(pastRevision.id);
+
+				const draftRev = await revisionRepo.findById(entry!.draftRevisionId!);
+				expect(draftRev).not.toBeNull();
+				expect(draftRev!.data.title).toBe("Past state");
+				expect(draftRev!.data.extra).toBe("field");
+			});
+
+			it("attributes the new draft revision to the caller", async () => {
+				const content = await contentRepo.create(createPostFixture());
+				const pastRevision = await revisionRepo.create({
+					collection: "post",
+					entryId: content.id,
+					data: { title: "Past" },
+					authorId: "original_author",
+				});
+
+				await handleRevisionRestore(db, pastRevision.id, callerUserId, {
+					supportsRevisions: true,
+				});
+
+				const entry = await contentRepo.findById("post", content.id);
+				const draftRev = await revisionRepo.findById(entry!.draftRevisionId!);
+				expect(draftRev!.authorId).toBe(callerUserId);
+			});
+
+			it("does not change the live slug even when revision carries _slug", async () => {
+				const content = await contentRepo.create({
+					...createPostFixture(),
+					slug: "live-slug",
+					data: { title: "Live" },
+				});
+				const pastRevision = await revisionRepo.create({
+					collection: "post",
+					entryId: content.id,
+					data: { title: "Past", _slug: "past-slug" },
+				});
+
+				await handleRevisionRestore(db, pastRevision.id, callerUserId, {
+					supportsRevisions: true,
+				});
+
+				const live = await contentRepo.findById("post", content.id);
+				// Live slug must not change; slug rewrite must go through publish
+				expect(live?.slug).toBe("live-slug");
+			});
+
+			it("returns NOT_FOUND for non-existent revision", async () => {
+				const result = await handleRevisionRestore(db, "nonexistent-id", callerUserId, {
+					supportsRevisions: true,
+				});
+				expect(result.success).toBe(false);
+				expect(result.error?.code).toBe("NOT_FOUND");
+			});
+		});
 	});
 });
