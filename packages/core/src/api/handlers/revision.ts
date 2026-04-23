@@ -3,13 +3,24 @@
  */
 
 import type { Kysely } from "kysely";
-import { sql } from "kysely";
 
 import { ContentRepository } from "../../database/repositories/content.js";
 import { RevisionRepository, type Revision } from "../../database/repositories/revision.js";
+import { withTransaction } from "../../database/transaction.js";
 import type { Database } from "../../database/types.js";
-import { validateIdentifier } from "../../database/validate.js";
 import type { ApiResult, ContentResponse } from "../types.js";
+
+/**
+ * Sentinel thrown inside the draft-aware restore transaction when the
+ * target content row is missing or soft-deleted. Used to roll back the
+ * just-created draft revision so we don't leave an orphan behind.
+ */
+class ContentNotFoundForRestoreError extends Error {
+	constructor() {
+		super("Content item not found for revision restore");
+		this.name = "ContentNotFoundForRestoreError";
+	}
+}
 
 export interface RevisionListResponse {
 	items: Revision[];
@@ -129,22 +140,53 @@ export async function handleRevisionRestore(
 			// Draft-aware path: stage the restored data as a new draft revision.
 			// Do NOT update live content columns — the restore must go through
 			// publish, just like any other edit on a revisioned collection.
-			const draftRevision = await revisionRepo.create({
-				collection: revision.collection,
-				entryId: revision.entryId,
-				data: revision.data,
-				authorId: callerUserId,
-			});
+			//
+			// Wrap the create-revision + update-draft-pointer in a transaction
+			// so that if the content row is missing or soft-deleted, we don't
+			// leave an orphan `revisions` row pointing at a non-existent entry.
+			// `ContentRepository.setDraftRevision` validates entry existence
+			// and throws when the row is missing, which rolls back the
+			// just-inserted revision inside the transaction.
+			try {
+				await withTransaction(db, async (trx) => {
+					const trxRevisionRepo = new RevisionRepository(trx);
+					const trxContentRepo = new ContentRepository(trx);
 
-			validateIdentifier(revision.collection, "collection");
-			const tableName = `ec_${revision.collection}`;
-			await sql`
-				UPDATE ${sql.ref(tableName)}
-				SET draft_revision_id = ${draftRevision.id},
-					updated_at = ${new Date().toISOString()}
-				WHERE id = ${revision.entryId}
-				AND deleted_at IS NULL
-			`.execute(db);
+					// Re-check the content row exists up-front inside the
+					// transaction so we fail before inserting the revision.
+					// This gives a clean NOT_FOUND path without relying on
+					// transaction rollback (which is a no-op on D1 — see
+					// `withTransaction` docs).
+					const existing = await trxContentRepo.findById(revision.collection, revision.entryId);
+					if (!existing) {
+						throw new ContentNotFoundForRestoreError();
+					}
+
+					const draftRevision = await trxRevisionRepo.create({
+						collection: revision.collection,
+						entryId: revision.entryId,
+						data: revision.data,
+						authorId: callerUserId,
+					});
+
+					await trxContentRepo.setDraftRevision(
+						revision.collection,
+						revision.entryId,
+						draftRevision.id,
+					);
+				});
+			} catch (error) {
+				if (error instanceof ContentNotFoundForRestoreError) {
+					return {
+						success: false,
+						error: {
+							code: "NOT_FOUND",
+							message: `Content item not found: ${revision.entryId}`,
+						},
+					};
+				}
+				throw error;
+			}
 
 			// Fire-and-forget: prune old revisions to prevent unbounded growth
 			void revisionRepo
@@ -153,6 +195,8 @@ export async function handleRevisionRestore(
 
 			const item = await contentRepo.findById(revision.collection, revision.entryId);
 			if (!item) {
+				// Content was soft-deleted between the transaction and this
+				// read. Return NOT_FOUND so callers get a consistent response.
 				return {
 					success: false,
 					error: {

@@ -2015,19 +2015,33 @@ export class EmDashRuntime {
 		// overwrite live content even on collections with `supports: ["revisions"]`,
 		// bypassing the editorial review workflow that `handleContentUpdate`
 		// enforces for ordinary edits.
-		let supportsRevisions = false;
+		//
+		// Fail closed: if we cannot determine the collection's capability
+		// (e.g. transient DB failure in `getCollectionWithFields`), refuse
+		// the restore rather than silently falling back to the direct-write
+		// path. Falling back would convert a draft-stage operation into a
+		// live overwrite and bypass editorial review, which is exactly the
+		// behavior this dispatch exists to prevent.
+		const revision = await handleRevisionGet(this.db, revisionId);
+		if (!revision.success) {
+			return revision;
+		}
+
+		let supportsRevisions: boolean;
 		try {
-			const revision = await handleRevisionGet(this.db, revisionId);
-			if (revision.success && revision.data?.item?.collection) {
-				const collectionInfo = await this.schemaRegistry.getCollectionWithFields(
-					revision.data.item.collection,
-				);
-				supportsRevisions = collectionInfo?.supports?.includes("revisions") ?? false;
-			}
+			const collectionInfo = await this.schemaRegistry.getCollectionWithFields(
+				revision.data.item.collection,
+			);
+			supportsRevisions = collectionInfo?.supports?.includes("revisions") ?? false;
 		} catch {
-			// If we can't determine capability, fall through to legacy
-			// behavior. The handler will then look up the revision itself
-			// and return NOT_FOUND if it's really missing.
+			return {
+				success: false as const,
+				error: {
+					code: "COLLECTION_LOOKUP_FAILED",
+					message:
+						"Failed to determine collection capabilities for revision restore. Refusing to restore to avoid bypassing editorial review.",
+				},
+			};
 		}
 
 		return handleRevisionRestore(this.db, revisionId, callerUserId, { supportsRevisions });

@@ -124,6 +124,44 @@ describe("revision restore respects draft workflow on revisioned collections", (
 		expect(draftRev?.authorId).toBe("user_editor");
 	});
 
+	it("returns NOT_FOUND without creating an orphan revision when entry is soft-deleted", async () => {
+		// Regression for a review finding: the draft-aware restore path used
+		// to create a revision row and then UPDATE the content table. If the
+		// entry was soft-deleted between those steps, the UPDATE affected 0
+		// rows but the revision row was left behind as an orphan.
+		const article = await contentRepo.create({
+			type: "article",
+			slug: "soft-deleted",
+			data: { title: "Live title" },
+			status: "published",
+		});
+		const pastRevision = await revisionRepo.create({
+			collection: "article",
+			entryId: article.id,
+			data: { title: "Older title" },
+		});
+
+		// Soft-delete the entry. Any subsequent restore must return NOT_FOUND
+		// and must not leave an orphan revision behind.
+		await contentRepo.delete("article", article.id);
+
+		const beforeCount = await revisionRepo.countByEntry("article", article.id);
+
+		const supportsRevisions = await getSupportsRevisions("article");
+		expect(supportsRevisions).toBe(true);
+
+		const result = await handleRevisionRestore(db, pastRevision.id, "user_editor", {
+			supportsRevisions,
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.error?.code).toBe("NOT_FOUND");
+
+		// No orphan revision row must have been created for the missing entry.
+		const afterCount = await revisionRepo.countByEntry("article", article.id);
+		expect(afterCount).toBe(beforeCount);
+	});
+
 	it("non-revisioned collection still writes to live on restore", async () => {
 		// Secondary collection without revision support
 		await registry.createCollection({
