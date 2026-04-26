@@ -12,6 +12,9 @@ import type { Database } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import type { SearchConfig } from "./types.js";
 
+/** Regex character escape pattern for embedding strings in a RegExp source. */
+const REGEX_ESCAPE = /[.*+?^${}()|[\]\\]/g;
+
 /**
  * FTS5 Manager
  *
@@ -127,9 +130,25 @@ export class FTSManager {
 	 * tokens get removed and the inverted index drifts out of sync until
 	 * SQLite raises `SQLITE_CORRUPT_VTAB` on the next mutation. See
 	 * https://www.sqlite.org/fts5.html#external_content_tables.
+	 *
+	 * The UPDATE and DELETE triggers gate the `'delete'` on
+	 * `OLD.deleted_at IS NULL` because the INSERT trigger never indexed
+	 * rows that were already soft-deleted. Issuing `'delete'` for a rowid
+	 * that was never inserted into the FTS index is itself a corruption
+	 * trigger -- FTS5's `'delete'` is not a no-op on missing rowids and
+	 * raises `SQLITE_CORRUPT_VTAB`. Affected paths include restore-from-
+	 * trash (UPDATE where `OLD.deleted_at IS NOT NULL`), permanent-delete
+	 * from trash (DELETE on a soft-deleted row), and any edit on a row
+	 * that's currently in the trash.
 	 */
 	private async createTriggers(collectionSlug: string, searchableFields: string[]): Promise<void> {
 		this.validateInputs(collectionSlug, searchableFields);
+		if (searchableFields.length === 0) {
+			throw new Error(
+				`Cannot create FTS triggers for collection "${collectionSlug}": no searchable fields. ` +
+					`Mark at least one field as searchable before enabling search.`,
+			);
+		}
 		const ftsTable = this.getFtsTableName(collectionSlug);
 		const contentTable = this.getContentTableName(collectionSlug);
 		const fieldList = searchableFields.join(", ");
@@ -157,13 +176,20 @@ export class FTSManager {
 		// external-content-safe `'delete'` command (which uses OLD column
 		// values, captured before the row was modified), then re-insert
 		// the new values when the row is still visible.
+		//
+		// `'delete'` is gated on `OLD.deleted_at IS NULL` because rows that
+		// were soft-deleted are not in the FTS index (the INSERT trigger
+		// skips them). Issuing `'delete'` for a missing rowid raises
+		// `SQLITE_CORRUPT_VTAB`, which would break restore-from-trash and
+		// edits to soft-deleted rows.
 		await sql
 			.raw(`
 			CREATE TRIGGER IF NOT EXISTS "${ftsTable}_update" 
 			AFTER UPDATE ON "${contentTable}" 
 			BEGIN
 				INSERT INTO "${ftsTable}"("${ftsTable}", rowid, id, locale, ${fieldList})
-				VALUES('delete', OLD.rowid, OLD.id, OLD.locale, ${oldFieldList});
+				SELECT 'delete', OLD.rowid, OLD.id, OLD.locale, ${oldFieldList}
+				WHERE OLD.deleted_at IS NULL;
 				INSERT INTO "${ftsTable}"(rowid, id, locale, ${fieldList})
 				SELECT NEW.rowid, NEW.id, NEW.locale, ${newFieldList}
 				WHERE NEW.deleted_at IS NULL;
@@ -171,17 +197,18 @@ export class FTSManager {
 		`)
 			.execute(this.db);
 
-		// Delete trigger - same external-content-safe `'delete'` form. The
-		// row is gone from the content table by the time this fires, so
-		// `DELETE FROM fts WHERE rowid = OLD.rowid` would find no backing
-		// row and leave the index out of sync.
+		// Delete trigger - same external-content-safe `'delete'` form,
+		// gated on `OLD.deleted_at IS NULL` for the same reason as the
+		// UPDATE trigger: permanent-delete from trash hits a row whose
+		// `deleted_at` is already set and which was never indexed.
 		await sql
 			.raw(`
 			CREATE TRIGGER IF NOT EXISTS "${ftsTable}_delete" 
 			AFTER DELETE ON "${contentTable}" 
 			BEGIN
 				INSERT INTO "${ftsTable}"("${ftsTable}", rowid, id, locale, ${fieldList})
-				VALUES('delete', OLD.rowid, OLD.id, OLD.locale, ${oldFieldList});
+				SELECT 'delete', OLD.rowid, OLD.id, OLD.locale, ${oldFieldList}
+				WHERE OLD.deleted_at IS NULL;
 			END
 		`)
 			.execute(this.db);
@@ -420,17 +447,31 @@ export class FTSManager {
 	private async hasLegacyTriggers(collectionSlug: string): Promise<boolean> {
 		if (!isSqlite(this.db)) return false;
 		const ftsTable = this.getFtsTableName(collectionSlug);
+		// Match exact trigger names rather than a LIKE pattern -- ftsTable
+		// contains underscores, which are SQL LIKE wildcards, and could
+		// otherwise produce false positives against unrelated triggers.
+		const insertTrigger = `${ftsTable}_insert`;
+		const updateTrigger = `${ftsTable}_update`;
+		const deleteTrigger = `${ftsTable}_delete`;
 
 		const result = await sql<{ sql: string | null }>`
 			SELECT sql FROM sqlite_master
 			WHERE type = 'trigger'
 			AND tbl_name = ${this.getContentTableName(collectionSlug)}
-			AND name LIKE ${`${ftsTable}_%`}
+			AND name IN (${insertTrigger}, ${updateTrigger}, ${deleteTrigger})
 		`.execute(this.db);
 
-		const legacyMarker = `DELETE FROM "${ftsTable}" WHERE rowid = OLD.rowid`;
+		// Match the legacy unsafe pattern with whitespace-tolerant regex --
+		// older shipped versions may have differed slightly in formatting
+		// (e.g. line breaks, extra spaces) and we don't want to miss any.
+		// Pattern: DELETE FROM "<fts>" WHERE rowid = OLD.rowid
+		const escaped = ftsTable.replace(REGEX_ESCAPE, "\\$&");
+		const legacyPattern = new RegExp(
+			`DELETE\\s+FROM\\s+"?${escaped}"?\\s+WHERE\\s+rowid\\s*=\\s*OLD\\.rowid`,
+			"i",
+		);
 		for (const row of result.rows) {
-			if (row.sql && row.sql.includes(legacyMarker)) {
+			if (row.sql && legacyPattern.test(row.sql)) {
 				return true;
 			}
 		}

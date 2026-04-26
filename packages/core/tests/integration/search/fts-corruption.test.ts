@@ -187,6 +187,147 @@ describe("FTS corruption on publish (SQLITE_CORRUPT_VTAB)", () => {
 		).resolves.toBeDefined();
 	});
 
+	it("survives the full trash lifecycle (soft-delete -> restore -> integrity-check)", async () => {
+		// The INSERT trigger only indexes rows where `deleted_at IS NULL`, so
+		// the UPDATE/DELETE triggers must gate `'delete'` on the same
+		// condition. Without that gate, restoring a row from trash issues
+		// `'delete'` for a rowid that's not in the FTS index, which raises
+		// `SQLITE_CORRUPT_VTAB`. Reproduces the regression introduced
+		// alongside the original fix.
+		const created = await repo.create({
+			type: "pages",
+			slug: "trashable",
+			status: "draft",
+			data: {
+				title: "Trashable",
+				content: [
+					{
+						_type: "block",
+						_key: "a",
+						style: "normal",
+						children: [{ _type: "span", _key: "s", text: "Body before trash." }],
+					},
+				],
+			},
+		});
+
+		await repo.publish("pages", created.id);
+
+		// Soft-delete -- this UPDATE moves OLD (in-index) -> NEW (deleted).
+		await expect(repo.delete("pages", created.id)).resolves.toBe(true);
+		await expect(
+			sql
+				.raw(`INSERT INTO _emdash_fts_pages(_emdash_fts_pages) VALUES('integrity-check')`)
+				.execute(db),
+		).resolves.toBeDefined();
+
+		// Restore -- OLD has `deleted_at IS NOT NULL` (not in index), NEW
+		// has `deleted_at IS NULL`. The UPDATE trigger must NOT issue
+		// `'delete'` here.
+		await expect(repo.restore("pages", created.id)).resolves.toBe(true);
+		await expect(
+			sql
+				.raw(`INSERT INTO _emdash_fts_pages(_emdash_fts_pages) VALUES('integrity-check')`)
+				.execute(db),
+		).resolves.toBeDefined();
+
+		// After restore the row should be back in the index.
+		const docsizeAfterRestore = await sql<{ count: number }>`
+			SELECT COUNT(*) as count FROM "_emdash_fts_pages_docsize"
+		`.execute(db);
+		expect(docsizeAfterRestore.rows[0]?.count).toBe(1);
+
+		// Edit after restore -- exercises the normal indexed-OLD path again.
+		await repo.update("pages", created.id, {
+			data: {
+				title: "Restored and edited",
+				content: [
+					{
+						_type: "block",
+						_key: "a",
+						style: "normal",
+						children: [{ _type: "span", _key: "s", text: "Body after restore." }],
+					},
+				],
+			},
+		});
+		await expect(
+			sql
+				.raw(`INSERT INTO _emdash_fts_pages(_emdash_fts_pages) VALUES('integrity-check')`)
+				.execute(db),
+		).resolves.toBeDefined();
+	});
+
+	it("survives permanent delete of a soft-deleted row without corrupting the index", async () => {
+		// `permanentDelete` is a hard `DELETE FROM ec_pages WHERE id = ?`
+		// applied to a row that's already soft-deleted (i.e. not in the FTS
+		// index). The DELETE trigger must not issue `'delete'` for this
+		// rowid -- otherwise SQLITE_CORRUPT_VTAB.
+		const created = await repo.create({
+			type: "pages",
+			slug: "purgeable",
+			status: "draft",
+			data: {
+				title: "Purgeable",
+				content: [
+					{
+						_type: "block",
+						_key: "a",
+						style: "normal",
+						children: [{ _type: "span", _key: "s", text: "Will be purged." }],
+					},
+				],
+			},
+		});
+		await repo.publish("pages", created.id);
+		await expect(repo.delete("pages", created.id)).resolves.toBe(true);
+
+		// Permanent delete of a soft-deleted row.
+		await expect(repo.permanentDelete("pages", created.id)).resolves.toBe(true);
+		await expect(
+			sql
+				.raw(`INSERT INTO _emdash_fts_pages(_emdash_fts_pages) VALUES('integrity-check')`)
+				.execute(db),
+		).resolves.toBeDefined();
+
+		const docsize = await sql<{ count: number }>`
+			SELECT COUNT(*) as count FROM "_emdash_fts_pages_docsize"
+		`.execute(db);
+		expect(docsize.rows[0]?.count).toBe(0);
+	});
+
+	it("survives editing a row while it's in the trash without corrupting the index", async () => {
+		// An UPDATE on a row whose OLD.deleted_at is set should not issue
+		// `'delete'` to the FTS index (the row was never indexed). The
+		// regression hit any UPDATE on a soft-deleted row, including the
+		// ones the API issues when restoring metadata.
+		const created = await repo.create({
+			type: "pages",
+			slug: "edit-while-trashed",
+			status: "draft",
+			data: {
+				title: "Trashed",
+				content: [],
+			},
+		});
+		await repo.publish("pages", created.id);
+		await expect(repo.delete("pages", created.id)).resolves.toBe(true);
+
+		// Update directly via SQL -- repo.update filters out deleted rows,
+		// but other paths (admin tooling, migrations) can UPDATE in place.
+		await sql`
+			UPDATE ec_pages
+			SET title = 'edited while trashed'
+			WHERE id = ${created.id}
+		`.execute(db);
+
+		await expect(
+			sql
+				.raw(`INSERT INTO _emdash_fts_pages(_emdash_fts_pages) VALUES('integrity-check')`)
+				.execute(db),
+		).resolves.toBeDefined();
+	});
+
 	it("survives many edit/publish cycles without corrupting the index", async () => {
 		const created = await repo.create({
 			type: "pages",
