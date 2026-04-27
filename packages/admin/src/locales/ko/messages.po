@@ -1145,7 +1145,7 @@ msgstr "연결됨 {0}"
 msgid "Content"
 msgstr "콘텐츠"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "콘텐츠 블록"
 
@@ -1692,7 +1692,7 @@ msgstr "초안 변경사항을 버리시겠습니까?"
 msgid "Dismiss"
 msgstr "무시"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "탐색 메뉴 표시"
 
@@ -2914,7 +2914,7 @@ msgstr "미디어 쓰기"
 msgid "Medium section heading"
 msgstr "중간 섹션 제목"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "메뉴"
 
@@ -4010,7 +4010,7 @@ msgstr "취소 중..."
 msgid "Rich Text"
 msgstr "리치 텍스트"
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "리치 텍스트 콘텐츠"
 

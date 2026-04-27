@@ -1149,7 +1149,7 @@ msgstr "متصل {0}"
 msgid "Content"
 msgstr "محتوى"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "كتلة محتوى"
 
@@ -1696,7 +1696,7 @@ msgstr "التخلي عن تغييرات المسودة؟"
 msgid "Dismiss"
 msgstr "إخفاء"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "عرض قائمة تنقل"
 
@@ -2918,7 +2918,7 @@ msgstr "كتابة الوسائط"
 msgid "Medium section heading"
 msgstr "عنوان قسم متوسط"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "قائمة"
 
@@ -4014,7 +4014,7 @@ msgstr "جاري الإبطال..."
 msgid "Rich Text"
 msgstr "نص منسق"
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "محتوى نصي منسق"
 

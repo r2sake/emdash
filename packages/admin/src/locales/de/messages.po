@@ -1145,7 +1145,7 @@ msgstr ""
 msgid "Content"
 msgstr "Inhalt"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "Inhaltsblock"
 
@@ -1692,7 +1692,7 @@ msgstr "Änderungen am Entwurf verwerfen?"
 msgid "Dismiss"
 msgstr "Schließen"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "Ein Navigationsmenü anzeigen"
 
@@ -2914,7 +2914,7 @@ msgstr "Medien bearbeiten"
 msgid "Medium section heading"
 msgstr "Mittlere Abschnittsüberschrift"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "Menü"
 
@@ -4010,7 +4010,7 @@ msgstr "Wird widerrufen..."
 msgid "Rich Text"
 msgstr ""
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "Rich-Text-Inhalt"
 

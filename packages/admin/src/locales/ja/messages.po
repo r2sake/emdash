@@ -1145,7 +1145,7 @@ msgstr "{0}に接続済み"
 msgid "Content"
 msgstr "コンテンツ"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "コンテンツブロック"
 
@@ -1692,7 +1692,7 @@ msgstr "下書きの変更を破棄しますか？"
 msgid "Dismiss"
 msgstr "閉じる"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "ナビゲーションメニューを表示"
 
@@ -2914,7 +2914,7 @@ msgstr "メディア書き込み"
 msgid "Medium section heading"
 msgstr "中見出し"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "メニュー"
 
@@ -4010,7 +4010,7 @@ msgstr "取り消し中..."
 msgid "Rich Text"
 msgstr "リッチテキスト"
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "リッチテキストコンテンツ"
 

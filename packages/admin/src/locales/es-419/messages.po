@@ -1145,7 +1145,7 @@ msgstr "Conectado {0}"
 msgid "Content"
 msgstr "Contenido"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "Bloque de contenido"
 
@@ -1692,7 +1692,7 @@ msgstr "¿Descartar cambios en el borrador?"
 msgid "Dismiss"
 msgstr "Descartar"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "Mostrar un menú de navegación"
 
@@ -2914,7 +2914,7 @@ msgstr "Escritura de medios"
 msgid "Medium section heading"
 msgstr "Encabezado de sección media"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "Menú"
 
@@ -4010,7 +4010,7 @@ msgstr "Revocando..."
 msgid "Rich Text"
 msgstr "Texto enriquecido"
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "Contenido de texto enriquecido"
 

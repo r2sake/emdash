@@ -1147,7 +1147,7 @@ msgstr "متصل شده در {0}"
 msgid "Content"
 msgstr "محتوا"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "بلوک محتوا"
 
@@ -1694,7 +1694,7 @@ msgstr "صرف‌نظر از تغییرات پیش‌نویس؟"
 msgid "Dismiss"
 msgstr "رد کردن"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "نمایش فهرستی ناوبری"
 
@@ -2916,7 +2916,7 @@ msgstr "نوشتن رسانه"
 msgid "Medium section heading"
 msgstr "سرتیتر متوسط بخش"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "فهرست"
 
@@ -4012,7 +4012,7 @@ msgstr "در حال لغو..."
 msgid "Rich Text"
 msgstr "متن غنی"
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "محتوای متن غنی"
 

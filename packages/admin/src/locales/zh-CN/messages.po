@@ -1145,7 +1145,7 @@ msgstr "已连接 {0}"
 msgid "Content"
 msgstr "内容"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "内容块"
 
@@ -1692,7 +1692,7 @@ msgstr "放弃草稿更改？"
 msgid "Dismiss"
 msgstr "关闭"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "显示导航菜单"
 
@@ -2914,7 +2914,7 @@ msgstr "媒体写入"
 msgid "Medium section heading"
 msgstr "中章节标题"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "菜单"
 
@@ -4010,7 +4010,7 @@ msgstr "撤销中..."
 msgid "Rich Text"
 msgstr "富文本"
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "富文本内容"
 

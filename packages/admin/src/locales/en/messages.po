@@ -1145,7 +1145,7 @@ msgstr "Connected {0}"
 msgid "Content"
 msgstr "Content"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "Content Block"
 
@@ -1692,7 +1692,7 @@ msgstr "Discard draft changes?"
 msgid "Dismiss"
 msgstr "Dismiss"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "Display a navigation menu"
 
@@ -2914,7 +2914,7 @@ msgstr "Media Write"
 msgid "Medium section heading"
 msgstr "Medium section heading"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "Menu"
 
@@ -4010,7 +4010,7 @@ msgstr "Revoking..."
 msgid "Rich Text"
 msgstr "Rich Text"
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "Rich text content"
 

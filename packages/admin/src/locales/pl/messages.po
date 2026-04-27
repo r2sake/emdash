@@ -1145,7 +1145,7 @@ msgstr "Połączono {0}"
 msgid "Content"
 msgstr "Treść"
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr "Blok treści"
 
@@ -1692,7 +1692,7 @@ msgstr "Odrzucić zmiany szkicu?"
 msgid "Dismiss"
 msgstr "Zamknij"
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr "Wyświetl menu nawigacyjne"
 
@@ -2914,7 +2914,7 @@ msgstr "Zapis mediów"
 msgid "Medium section heading"
 msgstr "Średni nagłówek sekcji"
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr "Menu"
 
@@ -4010,7 +4010,7 @@ msgstr "Unieważnianie..."
 msgid "Rich Text"
 msgstr "Tekst sformatowany"
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr "Treść sformatowana"
 

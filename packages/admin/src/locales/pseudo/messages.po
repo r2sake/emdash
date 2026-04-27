@@ -1145,7 +1145,7 @@ msgstr ""
 msgid "Content"
 msgstr ""
 
-#: packages/admin/src/components/Widgets.tsx:90
+#: packages/admin/src/components/Widgets.tsx:95
 msgid "Content Block"
 msgstr ""
 
@@ -1692,7 +1692,7 @@ msgstr ""
 msgid "Dismiss"
 msgstr ""
 
-#: packages/admin/src/components/Widgets.tsx:97
+#: packages/admin/src/components/Widgets.tsx:102
 msgid "Display a navigation menu"
 msgstr ""
 
@@ -2914,7 +2914,7 @@ msgstr ""
 msgid "Medium section heading"
 msgstr ""
 
-#: packages/admin/src/components/Widgets.tsx:96
+#: packages/admin/src/components/Widgets.tsx:101
 msgid "Menu"
 msgstr ""
 
@@ -4010,7 +4010,7 @@ msgstr ""
 msgid "Rich Text"
 msgstr ""
 
-#: packages/admin/src/components/Widgets.tsx:91
+#: packages/admin/src/components/Widgets.tsx:96
 msgid "Rich text content"
 msgstr ""
 
