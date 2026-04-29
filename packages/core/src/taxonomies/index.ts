@@ -4,6 +4,10 @@
  * Provides functions to query taxonomy definitions and terms.
  */
 
+import type { Kysely } from "kysely";
+import { sql } from "kysely";
+
+import { validateIdentifier } from "../database/validate.js";
 import { getDb } from "../loader.js";
 import { requestCached, setRequestCacheEntry } from "../request-cache.js";
 import { chunks, SQL_BATCH_SIZE } from "../utils/chunks.js";
@@ -88,18 +92,10 @@ export async function getTaxonomyTerms(taxonomyName: string): Promise<TaxonomyTe
 			.orderBy("label", "asc")
 			.execute();
 
-		// Count entries for each term
-		const countsResult = await db
-			.selectFrom("content_taxonomies")
-			.select(["taxonomy_id"])
-			.select((eb) => eb.fn.count<number>("entry_id").as("count"))
-			.groupBy("taxonomy_id")
-			.execute();
-
-		const counts = new Map<string, number>();
-		for (const row of countsResult) {
-			counts.set(row.taxonomy_id, row.count);
-		}
+		// Count entries for each term — only count published, non-deleted
+		// entries. Without joining the content table, drafts and soft-
+		// deleted rows inflated category/tag counts in widgets (#581).
+		const counts = await countPublishedTermAssignments(db, def.collections);
 
 		const flatTerms: TaxonomyTermRow[] = rows.map((row) => ({
 			id: row.id,
@@ -141,14 +137,12 @@ export async function getTerm(taxonomyName: string, slug: string): Promise<Taxon
 
 	if (!row) return null;
 
-	// Get entry count
-	const countResult = await db
-		.selectFrom("content_taxonomies")
-		.select((eb) => eb.fn.count<number>("entry_id").as("count"))
-		.where("taxonomy_id", "=", row.id)
-		.executeTakeFirst();
-
-	const count = countResult?.count ?? 0;
+	// Get entry count — restricted to published, non-deleted entries (#581).
+	const def = await getTaxonomyDef(taxonomyName);
+	const counts = def
+		? await countPublishedTermAssignments(db, def.collections, [row.id])
+		: new Map<string, number>();
+	const count = counts.get(row.id) ?? 0;
 
 	// Get children if hierarchical
 	const childRows = await db
@@ -473,6 +467,68 @@ export async function getEntriesByTerm(
 	const { entries } = await getEmDashCollection(collection, options);
 
 	return entries;
+}
+
+/**
+ * Count `content_taxonomies` rows whose entry is currently published
+ * and not soft-deleted, grouped by taxonomy_id.
+ *
+ * Iterates the collections declared on the taxonomy definition and
+ * joins each `ec_{collection}` table. The taxonomy → collection mapping
+ * comes from `_emdash_taxonomy_defs.collections`; assignments to
+ * collections not declared there are excluded (treated as drift).
+ *
+ * Optional `termIds` restricts the GROUP BY to a known set of terms —
+ * used by `getTerm` so we don't scan the whole taxonomy.
+ *
+ * Pre-migration databases (or sites where a referenced `ec_*` table
+ * doesn't exist) contribute zero rows via the `isMissingTableError`
+ * branch.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- dialect-agnostic
+async function countPublishedTermAssignments(
+	db: Kysely<any>,
+	collections: string[],
+	termIds?: string[],
+): Promise<Map<string, number>> {
+	const counts = new Map<string, number>();
+	if (collections.length === 0) return counts;
+	if (termIds && termIds.length === 0) return counts;
+
+	for (const collection of collections) {
+		try {
+			validateIdentifier(collection, "collection");
+		} catch {
+			// Defense-in-depth: skip identifiers that wouldn't be safe to
+			// interpolate even though `_emdash_collections` validates on insert.
+			continue;
+		}
+		const tableName = `ec_${collection}`;
+		const termsFilter = termIds
+			? sql`AND ct.taxonomy_id IN (${sql.join(termIds.map((id) => sql`${id}`))})`
+			: sql``;
+		try {
+			const result = await sql<{ taxonomy_id: string; count: number | string }>`
+				SELECT ct.taxonomy_id, COUNT(*) AS count
+				FROM content_taxonomies ct
+				INNER JOIN ${sql.ref(tableName)} c
+					ON c.id = ct.entry_id
+				WHERE ct.collection = ${collection}
+					AND c.status = 'published'
+					AND c.deleted_at IS NULL
+					${termsFilter}
+				GROUP BY ct.taxonomy_id
+			`.execute(db);
+			for (const row of result.rows) {
+				const prev = counts.get(row.taxonomy_id) ?? 0;
+				counts.set(row.taxonomy_id, prev + Number(row.count));
+			}
+		} catch (error) {
+			if (isMissingTableError(error)) continue;
+			throw error;
+		}
+	}
+	return counts;
 }
 
 /**
