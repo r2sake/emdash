@@ -9,7 +9,7 @@ import { sql } from "kysely";
 
 import { validateIdentifier } from "../database/validate.js";
 import { getDb } from "../loader.js";
-import { requestCached, setRequestCacheEntry } from "../request-cache.js";
+import { peekRequestCache, requestCached, setRequestCacheEntry } from "../request-cache.js";
 import { chunks, SQL_BATCH_SIZE } from "../utils/chunks.js";
 import { isMissingTableError } from "../utils/db-errors.js";
 import type { TaxonomyDef, TaxonomyTerm, TaxonomyTermRow } from "./types.js";
@@ -20,9 +20,17 @@ import type { TaxonomyDef, TaxonomyTerm, TaxonomyTermRow } from "./types.js";
  * duplication during SSR bundling can't fragment the cache (same pattern
  * as `request-context.ts` and `secrets.ts`).
  *
- * Counts only change when entries are published, unpublished, trashed,
- * restored, or permanently deleted — call `invalidateTermCache()` from
- * those write paths to drop the cache.
+ * Counts change when:
+ *   - an entry's visibility flips (publish, unpublish, soft delete,
+ *     restore, permanent delete)
+ *   - a term assignment is added, removed, or replaced (e.g.
+ *     `setTermsForEntry`, `attachToEntry`, `detachFromEntry`,
+ *     `clearEntryTerms`)
+ *   - a taxonomy term itself is created, renamed, or deleted
+ *
+ * Call `invalidateTermCache()` from any of those write paths to drop the
+ * cache. Any new write path that affects either side of the join must
+ * call it too.
  */
 const TERM_COUNTS_CACHE_KEY = Symbol.for("@emdash-cms/core/term-counts-cache@1");
 
@@ -44,10 +52,12 @@ function getTermCountsHolder(): TermCountsHolder {
 /**
  * Invalidate the worker-lifetime term-counts cache.
  *
- * Called from any write path that can change which entries are visible
- * to public counts — `content:publish`/`unpublish`, soft delete, restore,
- * permanent delete, and the taxonomy-management routes that move term
- * assignments around. The next read repopulates the cache lazily.
+ * Called from any write path that can change either side of the count
+ * join — entry visibility (`content:publish`/`unpublish`, soft delete,
+ * restore, permanent delete) and term assignment changes
+ * (`setTermsForEntry`, `attachToEntry`, `detachFromEntry`,
+ * `clearEntryTerms`, term create/update/delete). The next read
+ * repopulates the cache lazily.
  */
 export function invalidateTermCache(): void {
 	// eslint-disable-next-line typescript-eslint(no-unsafe-type-assertion) -- globalThis singleton pattern
@@ -79,8 +89,18 @@ export async function getTaxonomyDefs(): Promise<TaxonomyDef[]> {
 
 /**
  * Get a single taxonomy definition by name
+ *
+ * If `getTaxonomyDefs()` has already loaded the full list in this request
+ * (which happens during entry-term hydration on every page that renders a
+ * collection), find the matching def in memory rather than running a
+ * second `WHERE name=?` query against `_emdash_taxonomy_defs`.
  */
 export async function getTaxonomyDef(name: string): Promise<TaxonomyDef | null> {
+	const allDefs = peekRequestCache<TaxonomyDef[]>("taxonomy-defs:all");
+	if (allDefs) {
+		return (await allDefs).find((d) => d.name === name) ?? null;
+	}
+
 	return requestCached(`taxonomy-def:${name}`, async () => {
 		const db = await getDb();
 
@@ -169,7 +189,14 @@ export async function getTerm(taxonomyName: string, slug: string): Promise<Taxon
 	if (!row) return null;
 
 	// Get entry count — restricted to published, non-deleted entries (#581).
-	// Reads from the same worker-lifetime cache as `getTaxonomyTerms`.
+	// Deliberately reads the full per-taxonomy counts map from the same
+	// worker-lifetime cache as `getTaxonomyTerms` rather than running a
+	// narrower single-term query: a category/tag page typically renders
+	// the widget that calls `getTaxonomyTerms` alongside `getTerm`, so
+	// the shared cache turns the second call into a Map lookup with no
+	// extra round-trip. A separate `WHERE taxonomy_id = ?` path would
+	// either bypass the cache (extra query on every render) or fragment
+	// it (separate cache keys for full vs. single-term reads).
 	const def = await getTaxonomyDef(taxonomyName);
 	const counts = def
 		? await getCachedTermCounts(db, taxonomyName, def.collections)
@@ -503,12 +530,15 @@ export async function getEntriesByTerm(
 
 /**
  * Count `content_taxonomies` rows whose entry is currently published
- * and not soft-deleted, grouped by taxonomy_id, for a single taxonomy
- * across every collection it applies to.
+ * and not soft-deleted, grouped by taxonomy_id, scoped to a single
+ * taxonomy across every collection it applies to.
  *
  * The taxonomy → collection mapping comes from
  * `_emdash_taxonomy_defs.collections`; assignments to collections not
- * declared there are excluded (treated as drift).
+ * declared there are excluded (treated as drift). Each per-collection
+ * subquery joins `taxonomies` and filters by `t.name = ${taxonomyName}`
+ * so we don't aggregate counts for unrelated taxonomies that happen to
+ * live in the same collection.
  *
  * Cold path: one `UNION ALL` round-trip combines per-collection joins
  * so a `tags` taxonomy spanning `posts` + `products` still costs one
@@ -519,11 +549,15 @@ export async function getEntriesByTerm(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dialect-agnostic
 async function countTermAssignmentsForTaxonomy(
 	db: Kysely<any>,
+	taxonomyName: string,
 	collections: string[],
 ): Promise<Map<string, number>> {
 	const counts = new Map<string, number>();
 
-	const safeCollections = collections.filter((collection) => {
+	// Dedupe: `_emdash_taxonomy_defs.collections` is JSON, so a seed or
+	// migration could yield duplicate entries. Without dedupe the
+	// `UNION ALL` would count the same collection twice.
+	const safeCollections = [...new Set(collections)].filter((collection) => {
 		try {
 			validateIdentifier(collection, "collection");
 			return true;
@@ -539,9 +573,12 @@ async function countTermAssignmentsForTaxonomy(
 	const buildPart = (collection: string) => sql`
 		SELECT ct.taxonomy_id, COUNT(*) AS count
 		FROM content_taxonomies ct
+		INNER JOIN taxonomies t
+			ON t.id = ct.taxonomy_id
 		INNER JOIN ${sql.ref(`ec_${collection}`)} e
 			ON e.id = ct.entry_id
 		WHERE ct.collection = ${collection}
+			AND t.name = ${taxonomyName}
 			AND e.status = 'published'
 			AND e.deleted_at IS NULL
 		GROUP BY ct.taxonomy_id
@@ -604,7 +641,7 @@ function getCachedTermCounts(
 	}
 	const cached = perDb.get(taxonomyName);
 	if (cached) return cached;
-	const promise = countTermAssignmentsForTaxonomy(db, collections).catch((error) => {
+	const promise = countTermAssignmentsForTaxonomy(db, taxonomyName, collections).catch((error) => {
 		perDb.delete(taxonomyName);
 		throw error;
 	});
