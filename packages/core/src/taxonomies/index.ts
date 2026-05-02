@@ -15,16 +15,46 @@ import { isMissingTableError } from "../utils/db-errors.js";
 import type { TaxonomyDef, TaxonomyTerm, TaxonomyTermRow } from "./types.js";
 
 /**
- * No-op — kept for API compatibility.
+ * Worker-lifetime cache for the per-taxonomy term-counts map computed by
+ * `countTermAssignmentsForTaxonomy`. Lives on `globalThis` so module
+ * duplication during SSR bundling can't fragment the cache (same pattern
+ * as `request-context.ts` and `secrets.ts`).
  *
- * Used to invalidate a worker-lifetime "has any term assignments?" probe.
- * That probe added a query on every cold isolate to save one query on
- * sites with zero term assignments (i.e. the wrong tradeoff), so we
- * dropped it. The batch term join below returns an empty map for empty
- * sites at the same cost as the probe, without the pre-check.
+ * Counts only change when entries are published, unpublished, trashed,
+ * restored, or permanently deleted — call `invalidateTermCache()` from
+ * those write paths to drop the cache.
+ */
+const TERM_COUNTS_CACHE_KEY = Symbol.for("@emdash-cms/core/term-counts-cache@1");
+
+interface TermCountsHolder {
+	cache: WeakMap<object, Map<string, Promise<Map<string, number>>>>;
+}
+
+function getTermCountsHolder(): TermCountsHolder {
+	// eslint-disable-next-line typescript-eslint(no-unsafe-type-assertion) -- globalThis singleton pattern
+	const holder = globalThis as Record<symbol, TermCountsHolder | undefined>;
+	let entry = holder[TERM_COUNTS_CACHE_KEY];
+	if (!entry) {
+		entry = { cache: new WeakMap() };
+		holder[TERM_COUNTS_CACHE_KEY] = entry;
+	}
+	return entry;
+}
+
+/**
+ * Invalidate the worker-lifetime term-counts cache.
+ *
+ * Called from any write path that can change which entries are visible
+ * to public counts — `content:publish`/`unpublish`, soft delete, restore,
+ * permanent delete, and the taxonomy-management routes that move term
+ * assignments around. The next read repopulates the cache lazily.
  */
 export function invalidateTermCache(): void {
-	// Intentionally empty.
+	// eslint-disable-next-line typescript-eslint(no-unsafe-type-assertion) -- globalThis singleton pattern
+	const holder = globalThis as Record<symbol, TermCountsHolder | undefined>;
+	if (holder[TERM_COUNTS_CACHE_KEY]) {
+		holder[TERM_COUNTS_CACHE_KEY] = { cache: new WeakMap() };
+	}
 }
 
 /**
@@ -95,7 +125,8 @@ export async function getTaxonomyTerms(taxonomyName: string): Promise<TaxonomyTe
 		// Count entries for each term — only count published, non-deleted
 		// entries. Without joining the content table, drafts and soft-
 		// deleted rows inflated category/tag counts in widgets (#581).
-		const counts = await countPublishedTermAssignments(db, def.collections);
+		// Worker-lifetime cached: writes call `invalidateTermCache()`.
+		const counts = await getCachedTermCounts(db, taxonomyName, def.collections);
 
 		const flatTerms: TaxonomyTermRow[] = rows.map((row) => ({
 			id: row.id,
@@ -138,9 +169,10 @@ export async function getTerm(taxonomyName: string, slug: string): Promise<Taxon
 	if (!row) return null;
 
 	// Get entry count — restricted to published, non-deleted entries (#581).
+	// Reads from the same worker-lifetime cache as `getTaxonomyTerms`.
 	const def = await getTaxonomyDef(taxonomyName);
 	const counts = def
-		? await countPublishedTermAssignments(db, def.collections, [row.id])
+		? await getCachedTermCounts(db, taxonomyName, def.collections)
 		: new Map<string, number>();
 	const count = counts.get(row.id) ?? 0;
 
@@ -471,53 +503,72 @@ export async function getEntriesByTerm(
 
 /**
  * Count `content_taxonomies` rows whose entry is currently published
- * and not soft-deleted, grouped by taxonomy_id.
+ * and not soft-deleted, grouped by taxonomy_id, for a single taxonomy
+ * across every collection it applies to.
  *
- * Iterates the collections declared on the taxonomy definition and
- * joins each `ec_{collection}` table. The taxonomy → collection mapping
- * comes from `_emdash_taxonomy_defs.collections`; assignments to
- * collections not declared there are excluded (treated as drift).
+ * The taxonomy → collection mapping comes from
+ * `_emdash_taxonomy_defs.collections`; assignments to collections not
+ * declared there are excluded (treated as drift).
  *
- * Optional `termIds` restricts the GROUP BY to a known set of terms —
- * used by `getTerm` so we don't scan the whole taxonomy.
- *
- * Pre-migration databases (or sites where a referenced `ec_*` table
- * doesn't exist) contribute zero rows via the `isMissingTableError`
- * branch.
+ * Cold path: one `UNION ALL` round-trip combines per-collection joins
+ * so a `tags` taxonomy spanning `posts` + `products` still costs one
+ * query, not N. Pre-migration databases (or drift where a referenced
+ * `ec_*` table is gone) fall back to a per-collection loop with
+ * `isMissingTableError` recovery.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dialect-agnostic
-async function countPublishedTermAssignments(
+async function countTermAssignmentsForTaxonomy(
 	db: Kysely<any>,
 	collections: string[],
-	termIds?: string[],
 ): Promise<Map<string, number>> {
 	const counts = new Map<string, number>();
-	if (collections.length === 0) return counts;
-	if (termIds && termIds.length === 0) return counts;
 
-	for (const collection of collections) {
+	const safeCollections = collections.filter((collection) => {
 		try {
 			validateIdentifier(collection, "collection");
+			return true;
 		} catch {
 			// Defense-in-depth: skip identifiers that wouldn't be safe to
 			// interpolate even though `_emdash_collections` validates on insert.
-			continue;
+			return false;
 		}
-		const tableName = `ec_${collection}`;
-		const termsFilter = termIds
-			? sql`AND ct.taxonomy_id IN (${sql.join(termIds.map((id) => sql`${id}`))})`
-			: sql``;
+	});
+
+	if (safeCollections.length === 0) return counts;
+
+	const buildPart = (collection: string) => sql`
+		SELECT ct.taxonomy_id, COUNT(*) AS count
+		FROM content_taxonomies ct
+		INNER JOIN ${sql.ref(`ec_${collection}`)} e
+			ON e.id = ct.entry_id
+		WHERE ct.collection = ${collection}
+			AND e.status = 'published'
+			AND e.deleted_at IS NULL
+		GROUP BY ct.taxonomy_id
+	`;
+
+	try {
+		const unionParts = safeCollections.map(buildPart);
+		const result = await sql<{ taxonomy_id: string; count: number | string }>`
+			SELECT taxonomy_id, SUM(count) AS count
+			FROM (${sql.join(unionParts, sql` UNION ALL `)}) AS sub
+			GROUP BY taxonomy_id
+		`.execute(db);
+		for (const row of result.rows) {
+			counts.set(row.taxonomy_id, Number(row.count));
+		}
+		return counts;
+	} catch (error) {
+		if (!isMissingTableError(error)) throw error;
+		// One or more `ec_{collection}` tables are missing (pre-migration
+		// install or drift). Fall back to per-collection so we can skip the
+		// missing ones without losing data from the rest.
+	}
+
+	for (const collection of safeCollections) {
 		try {
 			const result = await sql<{ taxonomy_id: string; count: number | string }>`
-				SELECT ct.taxonomy_id, COUNT(*) AS count
-				FROM content_taxonomies ct
-				INNER JOIN ${sql.ref(tableName)} c
-					ON c.id = ct.entry_id
-				WHERE ct.collection = ${collection}
-					AND c.status = 'published'
-					AND c.deleted_at IS NULL
-					${termsFilter}
-				GROUP BY ct.taxonomy_id
+				${buildPart(collection)}
 			`.execute(db);
 			for (const row of result.rows) {
 				const prev = counts.get(row.taxonomy_id) ?? 0;
@@ -529,6 +580,36 @@ async function countPublishedTermAssignments(
 		}
 	}
 	return counts;
+}
+
+/**
+ * Worker-lifetime cached wrapper around `countTermAssignmentsForTaxonomy`.
+ *
+ * Keyed by `(db, taxonomyName)` so playground / per-DO / per-test databases
+ * each maintain their own counts. Caches the in-flight promise so concurrent
+ * callers share one query; on error the cache entry is dropped so the next
+ * caller retries.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- dialect-agnostic
+function getCachedTermCounts(
+	db: Kysely<any>,
+	taxonomyName: string,
+	collections: string[],
+): Promise<Map<string, number>> {
+	const { cache } = getTermCountsHolder();
+	let perDb = cache.get(db);
+	if (!perDb) {
+		perDb = new Map();
+		cache.set(db, perDb);
+	}
+	const cached = perDb.get(taxonomyName);
+	if (cached) return cached;
+	const promise = countTermAssignmentsForTaxonomy(db, collections).catch((error) => {
+		perDb.delete(taxonomyName);
+		throw error;
+	});
+	perDb.set(taxonomyName, promise);
+	return promise;
 }
 
 /**
